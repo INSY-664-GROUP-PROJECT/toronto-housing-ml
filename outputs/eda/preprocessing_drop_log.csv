@@ -1,20 +1,21 @@
 dataset,step,rows_before,rows_after,dropped_rows,drop_pct,detail
-crime,keep_occurrence_year_2014_2019,206435,205321,1114,0.5396,
-crime,drop_missing_keys_and_coords,205321,205321,0,0.0,
+crime,keep_occurrenceyear_2014_2019,206435,205321,1114,0.5396,
+crime,drop_missing_core_fields,205321,205321,0,0.0,
 crime,toronto_bbox_filter,205321,205321,0,0.0,
-crime,deduplicate_event_unique_id,205321,178892,26429,12.872,subset=['event_unique_id']
-rentals,deduplicate_exact_listing_signature,1124,816,308,27.4021,"subset=['Address', 'Bedroom', 'Bathroom', 'Den', 'Lat', 'Long', 'Price']"
+crime,dedup_event_unique_id,205321,178892,26429,12.872,subset=['event_unique_id']
+rentals,dedup_listing_signature,1124,816,308,27.4021,"subset=['Address', 'Bedroom', 'Bathroom', 'Den', 'Lat', 'Long', 'Price']"
 rentals,keep_address_contains_toronto,816,599,217,26.5931,
 rentals,drop_missing_core_fields,599,599,0,0.0,
 rentals,toronto_bbox_filter,599,599,0,0.0,
-rentals,bedroom_plausibility_0_to_6,599,599,0,0.0,
-rentals,bathroom_plausibility_0_to_5,599,599,0,0.0,
-rentals,price_plausibility_400_to_10000,599,595,4,0.6678,
+rentals,bedroom_plausibility_0_6,599,599,0,0.0,
+rentals,bathroom_plausibility_0_5,599,599,0,0.0,
+rentals,price_plausibility_400_10000,599,595,4,0.6678,
 rentals,winsorize_price_q01_q99,595,595,0,0.0,q01=747.00;q99=4712.00;winsorized_rows=12
-restaurants,deduplicate_name_address_coords,15821,8660,7161,45.2626,"subset=['Restaurant Name', 'Restaurant Address', 'Restaurant Latitude', 'Restaurant Longitude']"
-restaurants,drop_missing_coords,8660,8616,44,0.5081,
-restaurants,toronto_bbox_filter,8616,8571,45,0.5223,
-restaurants,price_imputation_category_then_global,8571,8571,0,0.0,imputed_rows=2753;global_median=20.50
+restaurants,drop_missing_coords,15821,15773,48,0.3034,
+restaurants,toronto_bbox_filter,15773,15722,51,0.3233,
+restaurants,keep_address_contains_toronto,15722,11801,3921,24.9396,
+restaurants,impute_restaurant_price_category_then_global,11801,11801,0,0.0,global_median=20.50
+restaurants,dedup_restaurant_venue_signature,11801,6101,5700,48.301,"subset=['Restaurant Name', 'Restaurant Address', 'Restaurant Latitude', 'Restaurant Longitude']"
 subway,drop_missing_coords,69,69,0,0.0,
-subway,deduplicate_name_and_coords,69,69,0,0.0,"subset=['name', 'latitude', 'longitude']"
+subway,dedup_station_signature,69,69,0,0.0,"subset=['name', 'latitude', 'longitude']"
 subway,toronto_bbox_filter,69,69,0,0.0,
