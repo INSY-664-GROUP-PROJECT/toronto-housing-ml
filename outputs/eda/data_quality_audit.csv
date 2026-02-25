@@ -1,5 +1,0 @@
-dataset,rows,columns,duplicate_rows,missingness_pct,coord_valid_pct,toronto_bbox_coverage_pct
-crime,206435,29,0,0.0049,100.0,100.0
-rentals,1722,8,308,0.0,100.0,92.2764
-restaurants,15821,9,6,7.0048,99.6966,99.3742
-subway,69,3,0,0.0,100.0,100.0

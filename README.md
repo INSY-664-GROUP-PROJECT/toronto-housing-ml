@@ -21,25 +21,57 @@ This project aims to:
 
 **H3:** The resulting clusters correspond to meaningful urban profiles.
 
+## Project Structure
+
+```
+toronto-housing-ml/
+├── data/                  # Raw datasets (see data/README.md for sources)
+│   └── README.md          # Download instructions for each dataset
+├── notebooks/             # Jupyter notebooks for analysis
+│   └── toronto_housing_clustering_baseline.ipynb
+├── outputs/               # Generated CSVs and artifacts (not tracked)
+│   └── eda/               # EDA-stage intermediate outputs
+├── scripts/               # Standalone utility scripts
+│   └── subway_station_fetcher.py
+├── .gitignore
+├── LICENSE
+├── README.md
+└── requirements.txt
+```
+
+## Setup
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/<your-org>/toronto-housing-ml.git
+cd toronto-housing-ml
+
+# 2. Create and activate a virtual environment
+python -m venv .venv
+source .venv/bin/activate   # macOS / Linux
+
+# 3. Install dependencies
+pip install -r requirements.txt
+
+# 4. Download datasets (see data/README.md for links)
+#    Place all CSV files in the data/ directory.
+
+# 5. (Optional) Generate subway station data from OpenStreetMap
+python scripts/subway_station_fetcher.py
+
+# 6. Launch JupyterLab
+jupyter lab
+```
+
 ## Data Sources
 
-The project utilizes the following datasets:
-
-- **Crime Data**: Major Crime Indicators (MCI) from 2014-2019
-  - Source: [Toronto Police Data - Crime Rates by Neighbourhood](https://www.kaggle.com/datasets/kapastor/toronto-police-data-crime-rates-by-neighbourhood)
-  - File: `data/MCI_2014_to_2019.csv`
-
-- **Rental Data**: Toronto apartment rentals (2018)
-  - Source: [Toronto Apartment Price](https://www.kaggle.com/datasets/rajacsp/toronto-apartment-price)
-  - File: `data/Toronto_apartment_rentals_2018.csv`
-
-- **Restaurant Data**: Toronto restaurant information
-  - Source: [Toronto Restaurants](https://www.kaggle.com/datasets/kevinbi/toronto-restaurants)
-  - File: `data/trt_rest.csv`
-
-- **Transit Data**: Toronto subway station locations
-  - Source: Generated using `subway_station_fetcher.py` (fetches data from OpenStreetMap via Overpass API)
-  - File: `data/toronto_subway_stations.csv`
+| Dataset | Description | Source |
+|---------|-------------|--------|
+| `MCI_2014_to_2019.csv` | Major Crime Indicators (2014–2019) | [Kaggle](https://www.kaggle.com/datasets/kapastor/toronto-police-data-crime-rates-by-neighbourhood) |
+| `Toronto_apartment_rentals_2018.csv` | Toronto apartment rentals (2018) | [Kaggle](https://www.kaggle.com/datasets/rajacsp/toronto-apartment-price) |
+| `trt_rest.csv` | Toronto restaurant information | [Kaggle](https://www.kaggle.com/datasets/kevinbi/toronto-restaurants) |
+| `rentfaster.csv` | RentFaster Toronto listings | *(included in project data bundle)* |
+| `toronto_subway_stations.csv` | Subway station locations | Generated via `scripts/subway_station_fetcher.py` |
 
 ## Methodology
 
@@ -49,3 +81,7 @@ Using unsupervised clustering techniques, we analyze neighbourhoods across multi
 - **Accessibility**: Proximity to subway stations
 
 These features are combined to create a comprehensive neighbourhood profile that goes beyond traditional real estate metrics.
+
+## License
+
+This project is licensed under the MIT License — see [LICENSE](LICENSE) for details.
