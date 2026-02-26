@@ -2,13 +2,14 @@ from __future__ import annotations
 
 import json
 import math
-from pathlib import Path
 from typing import Any
 
 import joblib
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+from project_paths import OUTPUTS_DIR, feature_artifact_path, model_artifact_path
 
 try:
     import geopandas as gpd  # type: ignore
@@ -30,26 +31,18 @@ FEATURE_COLUMNS = [
 DISPLAY_COLUMNS = FEATURE_COLUMNS + ["cluster_label", "cluster_probability"]
 
 
-def get_project_root() -> Path:
-    return Path(__file__).resolve().parent
-
-
-def artifact_path(name: str) -> Path:
-    return get_project_root() / name
-
-
 @st.cache_resource
 def load_pipeline_artifacts() -> tuple[Any, Any, Any | None]:
-    model = joblib.load(artifact_path("hdbscan_model.pkl"))
-    scaler = joblib.load(artifact_path("scaler.pkl"))
-    pca_path = artifact_path("pca.pkl")
+    model = joblib.load(model_artifact_path("hdbscan_model.pkl"))
+    scaler = joblib.load(model_artifact_path("scaler.pkl"))
+    pca_path = model_artifact_path("pca.pkl")
     pca = joblib.load(pca_path) if pca_path.exists() else None
     return model, scaler, pca
 
 
 @st.cache_data
 def load_grid_features() -> pd.DataFrame:
-    parquet_path = artifact_path("grid_features.parquet")
+    parquet_path = feature_artifact_path("grid_features.parquet")
     if gpd is not None:
         try:
             gdf = gpd.read_parquet(parquet_path)
@@ -289,8 +282,8 @@ def _build_full_feature_vector(feature_values: dict[str, float], scaler: Any) ->
 @st.cache_data
 def _load_selected_feature_names() -> list[str]:
     candidates = [
-        artifact_path("selected_features.json"),
-        artifact_path("outputs/feature_selection/selected_features.json"),
+        feature_artifact_path("selected_features.json"),
+        OUTPUTS_DIR / "feature_selection" / "selected_features.json",
     ]
     for path in candidates:
         if path.exists():

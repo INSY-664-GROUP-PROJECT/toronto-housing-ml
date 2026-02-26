@@ -1,39 +1,34 @@
-from pathlib import Path
-
 import streamlit as st
 
-REQUIRED_ROOT_FILES = [
-    "hdbscan_model.pkl",
-    "scaler.pkl",
-    "grid_features.parquet",
-]
-OPTIONAL_ROOT_FILES = ["pca.pkl"]
+from project_paths import FEATURES_DIR, MODELS_DIR
+
+REQUIRED_MODEL_FILES = ["hdbscan_model.pkl", "scaler.pkl"]
+REQUIRED_FEATURE_FILES = ["grid_features.parquet"]
+OPTIONAL_MODEL_FILES = ["pca.pkl"]
 
 
 def _artifact_status() -> tuple[list[str], list[str]]:
-    root = Path(__file__).resolve().parent
-    missing_required = [name for name in REQUIRED_ROOT_FILES if not (root / name).exists()]
-    missing_optional = [name for name in OPTIONAL_ROOT_FILES if not (root / name).exists()]
+    missing_required = [name for name in REQUIRED_MODEL_FILES if not (MODELS_DIR / name).exists()]
+    missing_required += [
+        name for name in REQUIRED_FEATURE_FILES if not (FEATURES_DIR / name).exists()
+    ]
+    missing_optional = [name for name in OPTIONAL_MODEL_FILES if not (MODELS_DIR / name).exists()]
     return missing_required, missing_optional
 
 
 st.set_page_config(page_title="Toronto Housing Clusters", layout="wide")
 
-st.title("Toronto Housing Clustering")
-st.caption("HDBSCAN-powered street-level neighbourhood map")
-
 missing_required_files, missing_optional_files = _artifact_status()
 
 if missing_required_files:
     st.error(
-        "Missing required artifact(s) in project root: " + ", ".join(missing_required_files)
+        "Missing required artifact(s) under artifacts/: " + ", ".join(missing_required_files)
     )
     st.stop()
 
 if missing_optional_files:
-    st.info("Optional artifact not found: pca.pkl (pipeline will run without PCA)")
+    st.info("Optional artifact not found in artifacts/models: pca.pkl (pipeline will run without PCA)")
 
-st.markdown(
-    "Use the left sidebar to open:\n"
-    "- **Street Cluster Map** for geospatial cluster exploration and street/address lookup"
-)
+map_page = st.Page("pages/1_Map.py", title="Street Cluster Map")
+navigation = st.navigation([map_page], position="hidden")
+navigation.run()

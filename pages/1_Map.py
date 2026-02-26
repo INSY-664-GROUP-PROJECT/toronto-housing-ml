@@ -40,6 +40,13 @@ RESTAURANT_ICON_URL = (
     "<path d='M40 18 c4 4 4 10 0 14 v8' stroke='%231f2937' stroke-width='3' fill='none' stroke-linecap='round'/>"
     "</svg>"
 )
+TARGET_ICON_URL = (
+    "data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+    "<path d='M32 6 C21 6 12 15 12 26 c0 14 20 32 20 32 s20-18 20-32 C52 15 43 6 32 6 z' fill='%23111111'/>"
+    "<circle cx='32' cy='26' r='8' fill='white'/>"
+    "</svg>"
+)
 
 NOISE_COLOR = [150, 150, 150, 220]
 PALETTE = [
@@ -59,6 +66,13 @@ RESTAURANT_Q_COLORS = {
     2: [158, 202, 225, 220],
     3: [253, 174, 107, 220],
     4: [227, 74, 51, 220],
+}
+CLUSTER_NAMES = {
+    -1: "Not enough data",
+    0: "Transit",
+    1: "Crime",
+    2: "Restaurants",
+    3: "Average",
 }
 
 
@@ -83,6 +97,15 @@ def _cluster_color_map(cluster_ids: list[int]) -> dict[int, list[int]]:
     if -1 in cluster_ids:
         color_map[-1] = NOISE_COLOR
     return color_map
+
+
+def _cluster_name(cluster_id: int) -> str:
+    return CLUSTER_NAMES.get(int(cluster_id), f"Cluster {int(cluster_id)}")
+
+
+def _rgba_to_css(color: list[int]) -> str:
+    r, g, b, _ = color
+    return f"rgb({int(r)}, {int(g)}, {int(b)})"
 
 
 @st.cache_data
@@ -163,6 +186,7 @@ def _clustered_street_records() -> tuple[list[dict[str, Any]], float, float, flo
                     {
                         "path": coords,
                         "cluster_label": int(cid),
+                        "cluster_name": _cluster_name(int(cid)),
                         "color": color,
                         "midpoint_lat": float(mlat),
                         "midpoint_lon": float(mlon),
@@ -176,6 +200,7 @@ def _clustered_street_records() -> tuple[list[dict[str, Any]], float, float, flo
                         {
                             "path": coords,
                             "cluster_label": int(cid),
+                            "cluster_name": _cluster_name(int(cid)),
                             "color": color,
                             "midpoint_lat": float(mlat),
                             "midpoint_lon": float(mlon),
@@ -257,7 +282,7 @@ def _load_restaurant_points(max_points: int = 15000) -> list[dict[str, Any]]:
 
 
 @st.cache_data
-def _load_crime_points(max_points: int = 200000) -> list[dict[str, float]]:
+def _load_crime_hex_polygons(min_crime_per_km2: float = 1228.0, hex_size_km: float = 0.65) -> list[dict[str, Any]]:
     if not CRIME_CSV.exists():
         return []
     df = pd.read_csv(CRIME_CSV, usecols=["Lat", "Long"])
@@ -266,9 +291,56 @@ def _load_crime_points(max_points: int = 200000) -> list[dict[str, float]]:
     df = df.dropna(subset=["Lat", "Long"]).copy()
     if df.empty:
         return []
-    if len(df) > max_points:
-        df = df.sample(max_points, random_state=42)
-    return [{"lat": float(r.Lat), "lon": float(r.Long)} for r in df.itertuples(index=False)]
+
+    # Convert to local kilometer coordinates for density-consistent hex binning.
+    lat0 = float(df["Lat"].mean())
+    km_per_deg_lat = 110.574
+    km_per_deg_lon = 111.320 * np.cos(np.deg2rad(lat0))
+
+    x = df["Long"].to_numpy(dtype=float) * km_per_deg_lon
+    y = df["Lat"].to_numpy(dtype=float) * km_per_deg_lat
+    q = np.round(x / (1.5 * hex_size_km)).astype(int)
+    y_offset = (q % 2) * (np.sqrt(3) / 2.0) * hex_size_km
+    r = np.round((y - y_offset) / (np.sqrt(3) * hex_size_km)).astype(int)
+
+    bins = pd.DataFrame({"q": q, "r": r})
+    counts = bins.value_counts().reset_index(name="count")
+    hex_area_km2 = (3.0 * np.sqrt(3.0) / 2.0) * (hex_size_km**2)
+    counts["crime_per_km2"] = counts["count"] / hex_area_km2
+    counts = counts[counts["crime_per_km2"] > float(min_crime_per_km2)].copy()
+    if counts.empty:
+        return []
+
+    def _hex_polygon(qi: int, ri: int) -> list[list[float]]:
+        cx = 1.5 * hex_size_km * qi
+        cy = np.sqrt(3) * hex_size_km * ri + (qi % 2) * (np.sqrt(3) / 2.0) * hex_size_km
+        ring: list[list[float]] = []
+        for k in range(6):
+            ang = np.pi / 3.0 * k
+            px = cx + hex_size_km * np.cos(ang)
+            py = cy + hex_size_km * np.sin(ang)
+            lon = px / km_per_deg_lon
+            lat = py / km_per_deg_lat
+            ring.append([float(lon), float(lat)])
+        ring.append(ring[0])
+        return ring
+
+    max_density = float(counts["crime_per_km2"].max())
+    records: list[dict[str, Any]] = []
+    for row in counts.itertuples(index=False):
+        c = int(row.count)
+        density = float(row.crime_per_km2)
+        t = density / max_density if max_density > 0 else 0.0
+        alpha = int(40 + 80 * t)  # high transparency
+        records.append(
+            {
+                "polygon": _hex_polygon(int(row.q), int(row.r)),
+                "crime_count": c,
+                "crime_per_km2": density,
+                "fill_color": [20, 20, 20, alpha],  # dark transparent
+            }
+        )
+    return records
 
 
 @st.cache_data(show_spinner=False)
@@ -319,6 +391,22 @@ except Exception as exc:
 if not street_records:
     st.warning("No street segments available to render.")
     st.stop()
+
+available_cluster_ids = sorted({int(r["cluster_label"]) for r in street_records})
+cluster_filter_options = [f"{cid}: {_cluster_name(cid)}" for cid in available_cluster_ids]
+selected_cluster_options = st.sidebar.multiselect(
+    "Display Clusters",
+    options=cluster_filter_options,
+    default=cluster_filter_options,
+)
+selected_cluster_ids = {int(opt.split(":", 1)[0]) for opt in selected_cluster_options}
+street_records = [r for r in street_records if int(r["cluster_label"]) in selected_cluster_ids]
+if not street_records:
+    st.warning("No street segments remain after cluster filtering.")
+    st.stop()
+
+legend_color_map = _cluster_color_map(sorted(selected_cluster_ids))
+legend_items = sorted((cid, legend_color_map[cid]) for cid in selected_cluster_ids)
 
 show_subway = st.sidebar.checkbox("Show Subway", value=True)
 show_restaurants = st.sidebar.checkbox("Show Restaurants", value=False)
@@ -413,6 +501,7 @@ if show_restaurants:
                 radius_units="meters",
                 radius_min_pixels=0,
                 radius_max_pixels=6,
+                min_zoom=13,
                 pickable=False,
             )
         )
@@ -425,46 +514,43 @@ if show_restaurants:
                 get_size=18,
                 size_units="meters",
                 billboard=True,
+                min_zoom=13,
                 pickable=False,
             )
         )
 
 if show_crime_hex:
-    crime_points = _load_crime_points()
-    if crime_points:
+    crime_hexes = _load_crime_hex_polygons(min_crime_per_km2=1228.0)
+    if crime_hexes:
         layers.append(
             pdk.Layer(
-                "HexagonLayer",
-                data=crime_points,
-                get_position="[lon, lat]",
-                radius=180,
-                coverage=0.85,
-                elevation_scale=0,
+                "PolygonLayer",
+                data=crime_hexes,
+                get_polygon="polygon",
+                get_fill_color="fill_color",
+                get_line_color=[0, 0, 0, 0],
                 extruded=False,
-                color_range=[
-                    [255, 255, 204],
-                    [255, 237, 160],
-                    [254, 217, 118],
-                    [254, 178, 76],
-                    [253, 141, 60],
-                    [240, 59, 32],
-                ],
-                pickable=False,
+                stroked=False,
+                pickable=True,
             )
         )
 
 if resolved_lat is not None and resolved_lon is not None:
     layers.append(
         pdk.Layer(
-            "ScatterplotLayer",
-            data=[{"lat": resolved_lat, "lon": resolved_lon}],
+            "IconLayer",
+            data=[
+                {
+                    "lat": resolved_lat,
+                    "lon": resolved_lon,
+                    "icon_data": {"url": TARGET_ICON_URL, "width": 64, "height": 64, "anchorY": 64},
+                }
+            ],
             get_position="[lon, lat]",
-            get_fill_color=[20, 20, 20, 220],
-            get_line_color=[255, 255, 255, 255],
-            get_radius=80,
-            radius_units="meters",
-            stroked=True,
-            line_width_min_pixels=2,
+            get_icon="icon_data",
+            get_size=28,
+            size_units="meters",
+            billboard=True,
             pickable=False,
         )
     )
@@ -475,7 +561,7 @@ if resolved_lat is not None and resolved_lon is not None:
 view_state = pdk.ViewState(latitude=center_lat, longitude=center_lon, zoom=zoom, pitch=0, bearing=0)
 
 tooltip = {
-    "html": "<b>Cluster ID:</b> {cluster_label}<br/><b>Click to select location</b>",
+    "html": "<b>Cluster:</b> {cluster_label} - {cluster_name}<br/><b>Click to select location</b><br/><b>Crime Count:</b> {crime_count}<br/><b>Crime / km²:</b> {crime_per_km2}",
     "style": {"backgroundColor": "#111827", "color": "white"},
 }
 
@@ -493,17 +579,28 @@ st.pydeck_chart(
 )
 
 st.caption(f"Rendered {len(street_records):,} street segments colored by nearest grid-point cluster")
+st.markdown("**Cluster Legend**")
+legend_cols = st.columns(max(1, min(5, len(legend_items))))
+for idx, (cluster_id, color) in enumerate(legend_items):
+    with legend_cols[idx % len(legend_cols)]:
+        swatch = _rgba_to_css(color)
+        st.markdown(
+            f"<div style='display:flex;align-items:center;gap:8px;'>"
+            f"<span style='width:12px;height:12px;border-radius:2px;display:inline-block;background:{swatch};'></span>"
+            f"<span>{cluster_id} - {_cluster_name(cluster_id)}</span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
 if show_restaurants:
     st.caption("Restaurant quartiles: Q1 (blue) to Q4 (red)")
 
 if lookup_cluster is not None:
+    lookup_name = _cluster_name(int(lookup_cluster))
     st.subheader("Lookup Result")
     st.write(f"Location: {resolved_label}")
-    st.write(f"Expected Neighborhood Cluster: {lookup_cluster}")
+    st.write(f"Expected Neighborhood Cluster: {lookup_cluster} - {lookup_name}")
     if lookup_cluster == -1:
-        st.write(
-            "Cluster characteristics: Noise/outlier area. This location does not strongly belong to a stable cluster profile."
-        )
+        st.write("Cluster characteristics: Not enough data in this area to assign a stable profile.")
     else:
         st.write(f"Cluster characteristics: {describe_cluster(lookup_cluster)}")
