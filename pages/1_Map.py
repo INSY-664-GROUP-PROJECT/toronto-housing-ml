@@ -5,6 +5,7 @@ from typing import Any
 
 import geopandas as gpd
 import numpy as np
+import pandas as pd
 import pydeck as pdk
 import requests
 import streamlit as st
@@ -15,7 +16,31 @@ from utils import describe_cluster, load_grid_features
 st.set_page_config(page_title="Street Cluster Map", layout="wide")
 st.title("Street Cluster Map")
 
-STREETS_GEOJSON = Path(__file__).resolve().parents[1] / "data" / "toronto_streets.geojson"
+ROOT = Path(__file__).resolve().parents[1]
+STREETS_GEOJSON = ROOT / "data" / "toronto_streets.geojson"
+SUBWAY_CSV = ROOT / "data" / "toronto_subway_stations.csv"
+RESTAURANTS_CSV = ROOT / "data" / "trt_rest.csv"
+CRIME_CSV = ROOT / "data" / "MCI_2014_to_2019.csv"
+
+SUBWAY_ICON_URL = (
+    "data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+    "<rect x='10' y='6' width='44' height='42' rx='10' fill='%231f2937'/>"
+    "<rect x='16' y='12' width='32' height='18' rx='4' fill='white'/>"
+    "<circle cx='22' cy='38' r='4' fill='white'/>"
+    "<circle cx='42' cy='38' r='4' fill='white'/>"
+    "<rect x='28' y='48' width='8' height='8' fill='%231f2937'/>"
+    "</svg>"
+)
+RESTAURANT_ICON_URL = (
+    "data:image/svg+xml;utf8,"
+    "<svg xmlns='http://www.w3.org/2000/svg' width='64' height='64' viewBox='0 0 64 64'>"
+    "<circle cx='32' cy='32' r='26' fill='white' stroke='%231f2937' stroke-width='4'/>"
+    "<path d='M24 18 v18 M28 18 v18 M32 18 v18 M24 30 h8' stroke='%231f2937' stroke-width='3' fill='none' stroke-linecap='round'/>"
+    "<path d='M40 18 c4 4 4 10 0 14 v8' stroke='%231f2937' stroke-width='3' fill='none' stroke-linecap='round'/>"
+    "</svg>"
+)
+
 NOISE_COLOR = [150, 150, 150, 220]
 PALETTE = [
     [0, 107, 164, 220],
@@ -29,6 +54,12 @@ PALETTE = [
     [255, 188, 121, 220],
     [207, 207, 207, 220],
 ]
+RESTAURANT_Q_COLORS = {
+    1: [49, 130, 189, 220],
+    2: [158, 202, 225, 220],
+    3: [253, 174, 107, 220],
+    4: [227, 74, 51, 220],
+}
 
 
 def _zoom_from_bounds(min_lon: float, min_lat: float, max_lon: float, max_lat: float) -> float:
@@ -155,6 +186,91 @@ def _clustered_street_records() -> tuple[list[dict[str, Any]], float, float, flo
     return records, float(min_lon), float(min_lat), float(max_lon), float(max_lat)
 
 
+@st.cache_data
+def _load_subway_points() -> list[dict[str, Any]]:
+    if not SUBWAY_CSV.exists():
+        return []
+    df = pd.read_csv(SUBWAY_CSV)
+    if not {"latitude", "longitude"}.issubset(df.columns):
+        return []
+    df = df.dropna(subset=["latitude", "longitude"]).copy()
+    if "name" not in df.columns:
+        df["name"] = "Subway"
+    df["latitude"] = pd.to_numeric(df["latitude"], errors="coerce")
+    df["longitude"] = pd.to_numeric(df["longitude"], errors="coerce")
+    df = df.dropna(subset=["latitude", "longitude"])
+    df["icon_data"] = [
+        {"url": SUBWAY_ICON_URL, "width": 72, "height": 72, "anchorY": 72}
+        for _ in range(len(df))
+    ]
+    return df[["name", "latitude", "longitude", "icon_data"]].to_dict("records")
+
+
+@st.cache_data
+def _load_restaurant_points(max_points: int = 15000) -> list[dict[str, Any]]:
+    if not RESTAURANTS_CSV.exists():
+        return []
+    df = pd.read_csv(RESTAURANTS_CSV)
+    lat_col = "Restaurant Latitude"
+    lon_col = "Restaurant Longitude"
+    if lat_col not in df.columns or lon_col not in df.columns:
+        return []
+
+    df[lat_col] = pd.to_numeric(df[lat_col], errors="coerce")
+    df[lon_col] = pd.to_numeric(df[lon_col], errors="coerce")
+    df = df.dropna(subset=[lat_col, lon_col]).copy()
+    if df.empty:
+        return []
+
+    price_col = "Restaurant Price Range"
+    if price_col in df.columns:
+        score = (
+            df[price_col]
+            .astype(str)
+            .str.replace(r"[^$]", "", regex=True)
+            .str.len()
+            .replace(0, np.nan)
+        )
+        if score.notna().sum() >= 4:
+            q = pd.qcut(score.rank(method="first"), 4, labels=[1, 2, 3, 4])
+            df["quartile"] = pd.to_numeric(q, errors="coerce")
+        else:
+            df["quartile"] = 2
+    else:
+        df["quartile"] = 2
+
+    # Ensure NaN quartiles are handled consistently.
+    df["quartile"] = pd.to_numeric(df["quartile"], errors="coerce").fillna(2).astype(int)
+    df["quartile"] = df["quartile"].clip(lower=1, upper=4)
+    df["color"] = df["quartile"].map(RESTAURANT_Q_COLORS).apply(
+        lambda x: x if isinstance(x, list) else [140, 140, 140, 220]
+    )
+    df["name"] = df.get("Restaurant Name", pd.Series(["Restaurant"] * len(df))).astype(str)
+    df["icon_data"] = [
+        {"url": RESTAURANT_ICON_URL, "width": 72, "height": 72, "anchorY": 72}
+        for _ in range(len(df))
+    ]
+    df = df.rename(columns={lat_col: "latitude", lon_col: "longitude"})
+    if len(df) > max_points:
+        df = df.sample(max_points, random_state=42)
+    return df[["name", "latitude", "longitude", "quartile", "color", "icon_data"]].to_dict("records")
+
+
+@st.cache_data
+def _load_crime_points(max_points: int = 200000) -> list[dict[str, float]]:
+    if not CRIME_CSV.exists():
+        return []
+    df = pd.read_csv(CRIME_CSV, usecols=["Lat", "Long"])
+    df["Lat"] = pd.to_numeric(df["Lat"], errors="coerce")
+    df["Long"] = pd.to_numeric(df["Long"], errors="coerce")
+    df = df.dropna(subset=["Lat", "Long"]).copy()
+    if df.empty:
+        return []
+    if len(df) > max_points:
+        df = df.sample(max_points, random_state=42)
+    return [{"lat": float(r.Lat), "lon": float(r.Long)} for r in df.itertuples(index=False)]
+
+
 @st.cache_data(show_spinner=False)
 def _geocode_toronto_address(address: str) -> tuple[float, float, str] | None:
     query = f"{address}, Toronto, Ontario, Canada"
@@ -204,6 +320,10 @@ if not street_records:
     st.warning("No street segments available to render.")
     st.stop()
 
+show_subway = st.sidebar.checkbox("Show Subway", value=True)
+show_restaurants = st.sidebar.checkbox("Show Restaurants", value=False)
+show_crime_hex = st.sidebar.checkbox("Show Crime Hex Intensity", value=False)
+
 lookup_mode = st.sidebar.radio("Lookup Mode", ["Street/Address", "Click on map"])
 resolved_lat: float | None = None
 resolved_lon: float | None = None
@@ -227,7 +347,6 @@ if lookup_mode == "Street/Address":
             st.sidebar.error(f"Address lookup failed: {exc}")
 else:
     st.sidebar.caption("Click a street segment on the map to choose location.")
-    # Consume map selection from widget state at the start of rerun for immediate updates.
     map_state = st.session_state.get("street_cluster_map")
     picked_obj = _extract_picked_object(map_state)
     if picked_obj is not None and "midpoint_lat" in picked_obj and "midpoint_lon" in picked_obj:
@@ -237,9 +356,7 @@ else:
             "cluster": int(
                 picked_obj.get(
                     "cluster_label",
-                    _predict_cluster_at_point(
-                        float(picked_obj["midpoint_lat"]), float(picked_obj["midpoint_lon"])
-                    ),
+                    _predict_cluster_at_point(float(picked_obj["midpoint_lat"]), float(picked_obj["midpoint_lon"])),
                 )
             ),
         }
@@ -266,6 +383,76 @@ street_layer = pdk.Layer(
 )
 
 layers: list[Any] = [street_layer]
+
+if show_subway:
+    subway_points = _load_subway_points()
+    if subway_points:
+        layers.append(
+            pdk.Layer(
+                "IconLayer",
+                data=subway_points,
+                get_position="[longitude, latitude]",
+                get_icon="icon_data",
+                get_size=24,
+                size_units="meters",
+                billboard=True,
+                pickable=False,
+            )
+        )
+
+if show_restaurants:
+    restaurant_points = _load_restaurant_points()
+    if restaurant_points:
+        layers.append(
+            pdk.Layer(
+                "ScatterplotLayer",
+                data=restaurant_points,
+                get_position="[longitude, latitude]",
+                get_fill_color="color",
+                get_radius=9,
+                radius_units="meters",
+                radius_min_pixels=0,
+                radius_max_pixels=6,
+                pickable=False,
+            )
+        )
+        layers.append(
+            pdk.Layer(
+                "IconLayer",
+                data=restaurant_points,
+                get_position="[longitude, latitude]",
+                get_icon="icon_data",
+                get_size=18,
+                size_units="meters",
+                billboard=True,
+                pickable=False,
+            )
+        )
+
+if show_crime_hex:
+    crime_points = _load_crime_points()
+    if crime_points:
+        layers.append(
+            pdk.Layer(
+                "HexagonLayer",
+                data=crime_points,
+                get_position="[lon, lat]",
+                radius=180,
+                coverage=0.85,
+                elevation_scale=0,
+                extruded=False,
+                color_range=[
+                    [255, 255, 204],
+                    [255, 237, 160],
+                    [254, 217, 118],
+                    [254, 178, 76],
+                    [253, 141, 60],
+                    [240, 59, 32],
+                ],
+                pickable=False,
+            )
+        )
+
 if resolved_lat is not None and resolved_lon is not None:
     layers.append(
         pdk.Layer(
@@ -306,6 +493,9 @@ st.pydeck_chart(
 )
 
 st.caption(f"Rendered {len(street_records):,} street segments colored by nearest grid-point cluster")
+
+if show_restaurants:
+    st.caption("Restaurant quartiles: Q1 (blue) to Q4 (red)")
 
 if lookup_cluster is not None:
     st.subheader("Lookup Result")
